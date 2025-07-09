@@ -27,6 +27,18 @@ private:
         OrderPointer order_{nullptr};
         OrderPointers::iterator location_; // for quick access
     };
+
+    struct LevelData{
+        Quantity quantity_{};
+        Quantity count_{};
+
+        enum class Action {
+            ADD,
+            REMOVE,
+            MATCH
+        };
+    };
+    std::unordered_map<Price, LevelData> data_;
     // for a price store order pointers
     std::map<Price,OrderPointers,std::greater<Price>> bids_; // highest bid to lowest bid
     std::map<Price,OrderPointers,std::less<Price>> asks_; // lowest ask to highest ask
@@ -45,13 +57,14 @@ private:
     void OnOrderCancelled(OrderPointer order);
     void OnOrderAdded(OrderPointer order);
     void OnOrderMatched(Price price,Quantity quantity,bool isFullyFilled);
-    // void UpdateLevelData(Price price,Quantity quantity,LevelData::Action action);
+    void UpdateLevelData(Price price,Quantity quantity,LevelData::Action action);
 
-    bool CanFullyFill(Side side,Price price,Quantity quantity);
+    bool CanFullyFill(Side side,Price price,Quantity quantity) const;
     bool CanMatch(Side side,Price price) const;
     Trades MatchOrders();
 public:
     Orderbook();
+    ~Orderbook();
     // Orderbook(const Orderbook&) = delete;
     // void operator=(const Orderbook&) = delete;
     // Orderbook(Orderbook&&) = delete;

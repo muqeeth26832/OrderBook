@@ -11,6 +11,7 @@
 #include "Usings.h"
 #include "Constants.h"
 #include <sstream>
+#include <cmath>
 
 /* class to make an order object */
 /* it has public apis to know about the order details */
@@ -50,6 +51,12 @@ public:
            oss << "Order (" << GetOrderId() << ") cannot have its price adjusted, only market order can.";
            throw std::logic_error(oss.str());
        }
+       // if(!std::isfinite(price))
+       // {
+       //     std::ostringstream oss;
+       //     oss<<"Order must be a tradeable price";
+       //     throw std::logic_error(oss.str());
+       // }
         price_ = price;
         orderType_ = OrderType::GoodTillCancel;
     }

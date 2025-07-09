@@ -1,5 +1,7 @@
 #include "Orderbook.h"
+#include "Order.h"
 #include "OrderType.h"
+#include "Side.h"
 #include "Usings.h"
 
 #include <atomic>
@@ -8,62 +10,83 @@
 #include <numeric>
 #include <chrono>
 #include <ctime>
+#include <optional>
 
 /* Constructers and more */
-// Orderbook::Orderbook() : ordersPruneThread_{
-//     [this] {PruneGoodForDayOrders();}}{}
-Orderbook::Orderbook() {}
+/* when i create an orderbook
+ * i start pruning good for day orders thread
+ * I need to pass this to it as thread expects a callable object
+ */
+Orderbook::Orderbook() : ordersPruneThread_{[this] {PruneGoodForDayOrders();}}{}
+Orderbook::~Orderbook(){
+    shutdown_.store(true, std::memory_order_release);
+	shutdownConditionVariable_.notify_one();
+	ordersPruneThread_.join();
+}
 
 
 /* Private functions */
-
 void Orderbook::PruneGoodForDayOrders()
 {
-    return;
-    // using namespace std::chrono;
-    // const auto end  = hours(16); // at 4pm
+    using namespace std::chrono;
 
-    // while(true){
-    //     const auto now = system_clock::now();
-    //     const auto now_c = system_clock::to_time_t(now);
-    //     std::tm now_parts;
-    //     // localtime_s(&now_parts,&now_c);
+    const auto end = hours(16); // 4 PM
 
-    //     if(now_parts.tm_hour>=end.count())
-    //         now_parts.tm_mday +=1;
+    while (true)
+    {
+        const auto now = system_clock::now();
+        const auto now_c = system_clock::to_time_t(now);
+        std::tm now_parts;
 
-    //     // exactly stop at 4PM
-    //     now_parts.tm_hour = end.count();
-    //     now_parts.tm_min = 0;
-    //     now_parts.tm_sec = 0;
+        //  Use thread-safe & portable time function
+#if defined(_WIN32) || defined(_WIN64)
+        localtime_s(&now_parts, &now_c);  // Windows
+#else
+        localtime_r(&now_c, &now_parts);  // Linux/macOS
+#endif
 
-    //     auto next = system_clock::from_time_t(mktime(&now_parts));
-    //     auto till = next-now+milliseconds(100);
+        // Move to next day if it's already past 4 PM
+        if (now_parts.tm_hour >= end.count())
+            now_parts.tm_mday += 1;
 
-    //     {
-    //         std::unique_lock ordersLock{ ordersMutex_ };
-    //         if(shutdown_.load(std::memory_order_acquire) ||
-    //             shutdownConditionVariable_.wait_for(ordersLock,till)==std::cv_status::no_timeout)
-    //             return;
-    //     }
+        // Set exact 4:00:00 PM time
+        now_parts.tm_hour = end.count();
+        now_parts.tm_min = 0;
+        now_parts.tm_sec = 0;
 
-    //     OrderIds orderIds;
+        auto next = system_clock::from_time_t(mktime(&now_parts));
+        auto till = next - now + milliseconds(100);
 
-    //     {
-    //         std::scoped_lock ordersLock{ordersMutex_};
+        {
+            std::unique_lock ordersLock{ ordersMutex_ };
 
-    //         for(const auto& [_,entry] : orders_){
-    //             const auto& [order,_] = entry;
+            // Explicit check for shutdown using wait predicate
+            if (shutdownConditionVariable_.wait_for(
+                    ordersLock, till, [this]() { return shutdown_.load(std::memory_order_acquire); }))
+            {
+                return; // shutdown requested
+            }
+        }
 
-    //             if(order->GetOrderType()!=OrderType::GoodForDay)
-    //                 continue;
+        // Now prune GoodForDay orders
+        OrderIds orderIds;
 
-    //             orderIds.push_back(order->GetOrderId());
-    //         }
-    //     }
+        {
+            std::scoped_lock ordersLock{ ordersMutex_ };
 
-    //     CancelOrders(orderIds);
-    // }
+            for (const auto& [_, entry] : orders_)
+            {
+                const auto& [order, __] = entry;
+
+                if (order->GetOrderType() == OrderType::GoodForDay)
+                {
+                    orderIds.push_back(order->GetOrderId());
+                }
+            }
+        }
+
+        CancelOrders(orderIds);
+    }
 }
 
 /* to cancel the order */
@@ -80,7 +103,9 @@ void Orderbook::CancelOrders(OrderIds orderIds){
         CancelOrderInternal(orderId);
     }
 }
-
+/* i am not deleting the orders one by one as it would have to lock mutes an realease multiple times
+ * causing multiple cache flushed . this is not good for cache coherence
+ */
 void Orderbook::CancelOrderInternal(OrderId orderId){
     if(!orders_.contains(orderId)) return;
 
@@ -104,10 +129,9 @@ void Orderbook::CancelOrderInternal(OrderId orderId){
 			bids_.erase(price);
 	}
 
-	// OnOrderCancelled(order);
+	OnOrderCancelled(order);
 }
 
-#include <iostream>
 /* for fill and kill type see if it can match  */
 bool Orderbook::CanMatch(Side side,Price price) const
 {
@@ -117,7 +141,7 @@ bool Orderbook::CanMatch(Side side,Price price) const
         // check if someone is selling at some price that is <= our bid
         const auto& [bestAsk,_] = *asks_.begin(); // lowest some one is asking for
         return price>=bestAsk; // someone is willing to sell at or below my bid
-    }else{
+   }else{
         if(bids_.empty()) return false;
 
         // check if someone is buying at some price that is >= our ask
@@ -125,6 +149,45 @@ bool Orderbook::CanMatch(Side side,Price price) const
         return price<=bestBid; // some is willing to buy atleast at my ask
     }
 }
+
+
+bool Orderbook::CanFullyFill(Side side,Price price,Quantity quantity) const {
+    // if i cant even find a match for it
+    if(!CanMatch(side, price))
+        return false;
+
+    // i can find a match for it
+    // but can it get fully filled
+    std::optional<Price> threshold;
+
+    if(side==Side::Buy){
+        const auto [askPrice, _ ]  = *asks_.begin();
+        threshold = askPrice;
+    }else{
+        const auto [bidPrice, _ ]  = *bids_.begin();
+        threshold = bidPrice;
+    }
+
+    // we just want to know how much quanity is there between best askPrice and our price  (askPrice<price)
+    // if there is enought its good for us
+
+    for(const auto& [levelPrice,levelData] : data_){
+        if(threshold.has_value() &&
+            (side==Side::Buy && threshold.value() > levelPrice) ||
+            (side==Side::Sell && threshold.value() <levelPrice))
+            continue;
+
+        if((side==Side::Buy && levelPrice > price) || (side==Side::Sell && levelPrice < price))
+            continue;
+
+        if(quantity<=levelData.quantity_)
+            return true;
+        quantity-=levelData.quantity_;
+    }
+
+    return false;
+}
+
 
 /* match orders and return them */
 Trades Orderbook::MatchOrders(){
@@ -166,6 +229,9 @@ Trades Orderbook::MatchOrders(){
                 TradeInfo{bid->GetOrderId(),bid->GetPrice(),quantity}
                ,TradeInfo{ask->GetOrderId(),ask->GetPrice(),quantity}
             });
+
+            OnOrderMatched(bid->GetPrice(),quantity,bid->IsFilled());
+            OnOrderMatched(ask->GetPrice(),quantity,ask->IsFilled());
         }
     }
 
@@ -198,23 +264,26 @@ Trades Orderbook::AddOrder(OrderPointer order)
     if(orders_.find(order->GetOrderId()) != orders_.end()) // we already have this order
         return Trades{};
 
-    // if(order->GetOrderType()==OrderType::Market)
-    // {
-    //     if(order->GetSide()==Side::Buy && !asks_.empty()){
-    //         const auto& [worstAsk,_] = *asks_.rbegin(); // max sell price
-    //         order->ToGoodTillCancel(worstAsk);
-    //     }
-    //     else if(order->GetSide()==Side::Sell && !bids_.empty()){
-    //         const auto &[worstBid,_] = *bids_.rbegin(); // min buy price
-    //         order->ToGoodTillCancel(worstBid);
-    //     }
-    //     else{
-    //         return Trades{};
-    //     }
-    // }
+    if(order->GetOrderType()==OrderType::Market)
+    {
+        if(order->GetSide()==Side::Buy && !asks_.empty()){
+            const auto& [worstAsk,_] = *asks_.rbegin(); // max sell price
+            order->ToGoodTillCancel(worstAsk);
+        }
+        else if(order->GetSide()==Side::Sell && !bids_.empty()){
+            const auto &[worstBid,_] = *bids_.rbegin(); // min buy price
+            order->ToGoodTillCancel(worstBid);
+        }
+        else{
+            return Trades{};
+        }
+    }
 
 
     if(order->GetOrderType()==OrderType::FillAndKill && !CanMatch(order->GetSide(),order->GetPrice()) )
+        return Trades{};
+
+    if(order->GetOrderType()==OrderType::FillOrKill && !CanFullyFill(order->GetSide(), order->GetPrice(),order->GetInitialQuantity()))
         return Trades{};
 
     OrderPointers::iterator iterator;
@@ -243,6 +312,7 @@ Trades Orderbook::AddOrder(OrderPointer order)
     // so like to get that order from id we store order id mapped to which list in map and iterator in that map
    orders_.insert({order->GetOrderId(),OrderEntry{order,iterator}});
    // match it and return trades
+   OnOrderAdded(order);
    return MatchOrders();
 }
 
@@ -287,6 +357,36 @@ OrderbookLevelInfos Orderbook::GetOrderInfos() const
    }
    return OrderbookLevelInfos{bidInfos,askInfos};
 }
+
+/* Event based methods */
+
+void Orderbook::OnOrderCancelled(OrderPointer order){
+    UpdateLevelData(order->GetPrice(), order->GetRemainingQuantity(), LevelData::Action::REMOVE);
+}
+
+void Orderbook::OnOrderAdded(OrderPointer order){
+    UpdateLevelData(order->GetPrice(),order->GetInitialQuantity(),LevelData::Action::ADD);
+}
+
+void Orderbook::OnOrderMatched(Price price,Quantity quantity, bool isFullyFilled){
+    UpdateLevelData(price, quantity, isFullyFilled? LevelData::Action::REMOVE : LevelData::Action::MATCH);
+}
+
+void Orderbook::UpdateLevelData(Price price,Quantity quantity,LevelData::Action action){
+    auto& data = data_[price];
+    data.count_ += action==LevelData::Action::REMOVE ? -1 : action==LevelData::Action::ADD ? 1 : 0;
+
+    if(action==LevelData::Action::REMOVE || action==LevelData::Action::MATCH){
+        data.quantity_ -= quantity;
+    }
+    else{
+        data.quantity_ += quantity;
+    }
+
+    if(data.count_==0)
+        data_.erase(price);
+}
+
 
 
 /* TO print Orderbook */
