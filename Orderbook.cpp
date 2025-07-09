@@ -194,6 +194,7 @@ Trades Orderbook::MatchOrders(){
 /*Public functions */
 Trades Orderbook::AddOrder(OrderPointer order)
 {
+    std::scoped_lock ordersLock {ordersMutex_};
     if(orders_.find(order->GetOrderId()) != orders_.end()) // we already have this order
         return Trades{};
 
@@ -285,4 +286,95 @@ OrderbookLevelInfos Orderbook::GetOrderInfos() const
        askInfos.push_back(CreateLevelInfos(price,order));
    }
    return OrderbookLevelInfos{bidInfos,askInfos};
+}
+
+
+/* TO print Orderbook */
+
+
+#include <iomanip>
+#include <iostream>
+#include <algorithm>
+#include <string>
+
+// ANSI color codes
+const std::string GREEN = "\033[1;32m";   // bright green
+const std::string RED   = "\033[1;31m";   // bright red
+const std::string BOLD  = "\033[1m";
+const std::string RESET = "\033[0m";
+
+// Render a fixed-width depth bar
+std::string DepthBar(int quantity, int maxQty, bool isBid) {
+    int barWidth = 12;  // fixed width bar
+    int filled = (maxQty == 0) ? 0 : (quantity * barWidth) / maxQty;
+
+    std::string bar = std::string(filled, '*') + std::string(barWidth - filled, ' ');
+    return (isBid ? GREEN : RED) + bar + RESET;
+}
+
+void Orderbook::PrintOrderbook() const{
+    OrderbookLevelInfos info = GetOrderInfos();
+    const LevelInfos& bids = info.GetBids();
+    const LevelInfos& asks = info.GetAsks();
+
+    int maxQty = 0;
+    for (const auto& b : bids) maxQty = std::max(maxQty, (int)b.quantity_);
+    for (const auto& a : asks) maxQty = std::max(maxQty, (int)a.quantity_);
+
+    std::cout << "\n" << BOLD << "=================== ORDER BOOK ===================\n" << RESET;
+    std::cout << BOLD
+              << std::setw(25) << "BID (BUY) SIDE"
+              << " | "
+              << std::setw(25) << "ASK (SELL) SIDE"
+              << RESET << "\n";
+    std::cout << "----------------------------+-----------------------------\n";
+    std::cout << BOLD
+              << "QTY   PRICE     DEPTH       | DEPTH       PRICE   QTY"
+              << RESET << "\n";
+    std::cout << "----------------------------+-----------------------------\n";
+
+    size_t levels = std::max(bids.size(), asks.size());
+
+    for (size_t i = 0; i < levels; ++i) {
+        // Left: BID side
+        if (i < bids.size()) {
+            const auto& b = bids[i];
+            std::cout << std::setw(4) << b.quantity_
+                      << "  " << std::setw(6) << b.price_
+                      << "  " << DepthBar(b.quantity_, maxQty, true);
+        } else {
+            std::cout << std::setw(4) << "-" << "  " << std::setw(6) << "-" << "  " << std::string(12, ' ');
+        }
+
+        std::cout << " | ";
+
+        // Right: ASK side
+        if (i < asks.size()) {
+            const auto& a = asks[i];
+            std::cout << DepthBar(a.quantity_, maxQty, false)
+                      << "  " << std::setw(6) << a.price_
+                      << "  " << std::setw(4) << a.quantity_;
+        } else {
+            std::cout << std::string(12, ' ') << "  " << std::setw(6) << "-" << "  " << std::setw(4) << "-";
+        }
+
+        std::cout << "\n";
+    }
+
+    std::cout << "----------------------------+-----------------------------\n";
+
+    // Trader Info
+    if (!bids.empty() || !asks.empty()) {
+        std::cout << BOLD;
+        if (!bids.empty())
+            std::cout << "Best Bid: " << bids[0].price_ << " (" << bids[0].quantity_ << " qty)";
+        if (!bids.empty() && !asks.empty()) std::cout << " | ";
+        if (!asks.empty())
+            std::cout << "Best Ask: " << asks[0].price_ << " (" << asks[0].quantity_ << " qty)";
+        if (!bids.empty() && !asks.empty())
+            std::cout << "\nSpread: " << (asks[0].price_ - bids[0].price_);
+        std::cout << RESET << "\n";
+    }
+
+    std::cout << BOLD << "==================================================\n" << RESET;
 }

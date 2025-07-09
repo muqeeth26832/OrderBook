@@ -5,18 +5,16 @@
 
 #include <iostream>
 
-int main()
-{
-    Orderbook orderbook;
-    // Do work.
-    const OrderId orderId= 1;
 
+int main() {
+    Orderbook ob;
+    ob.AddOrder(std::make_shared<Order>(OrderType::GoodTillCancel, 1, Side::Buy,  Price(101), Quantity(10)));
+    ob.AddOrder(std::make_shared<Order>(OrderType::GoodTillCancel, 2, Side::Buy,  Price(102), Quantity(40)));
+    ob.AddOrder(std::make_shared<Order>(OrderType::GoodTillCancel, 3, Side::Sell, Price(105), Quantity(20)));
+    ob.AddOrder(std::make_shared<Order>(OrderType::GoodTillCancel, 4, Side::Sell, Price(106), Quantity(35)));
+    ob.AddOrder(std::make_shared<Order>(OrderType::GoodTillCancel, 5, Side::Sell, Price(107), Quantity(15)));
 
-
-    orderbook.AddOrder(std::make_shared<Order>(OrderType::GoodTillCancel,orderId,Side::Buy,Price(100),Quantity(10)));
-    std::cout<<orderbook.Size()<<std::endl;
-    orderbook.CancelOrder(orderId);
-    std::cout<<orderbook.Size()<<std::endl;
+    ob.PrintOrderbook();
 
     return 0;
 }

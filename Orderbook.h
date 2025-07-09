@@ -67,5 +67,6 @@ public:
     /* to know how many orders are in the orderbook */
     std::size_t Size() const {return orders_.size();}
     OrderbookLevelInfos GetOrderInfos() const;
+    void PrintOrderbook() const;
 
 };

@@ -21,6 +21,7 @@ public:
     : orderType_(orderType), orderId_(orderId), side_(side), price_(price), initialQuantity_(quantity), remainingQuantity_(quantity)
     {}
 
+    // market order doesnt care about price just cares about quantity
     Order(OrderId orderId,Side side,Quantity quantity)
     : Order(OrderType::Market,orderId,side,Constants::InvalidPrice,quantity)
     {}
