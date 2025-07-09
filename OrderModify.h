@@ -2,6 +2,9 @@
 
 #include "Order.h"
 
+
+/* Light weight representation of an order  used to modify an existing order */
+
 class OrderModify {
 public:
     OrderModify(OrderId orderId,Side side, Price price,Quantity quantity)

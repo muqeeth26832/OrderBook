@@ -12,12 +12,9 @@ int main()
     const OrderId orderId= 1;
 
 
-    std::cout<<orderbook.Size()<<std::endl;
 
     orderbook.AddOrder(std::make_shared<Order>(OrderType::GoodTillCancel,orderId,Side::Buy,Price(100),Quantity(10)));
     std::cout<<orderbook.Size()<<std::endl;
-
-
     orderbook.CancelOrder(orderId);
     std::cout<<orderbook.Size()<<std::endl;
 

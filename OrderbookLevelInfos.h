@@ -2,6 +2,8 @@
 
 #include "LevelInfo.h"
 
+/* This contains both bids and asks as  vector of levels */
+
 class OrderbookLevelInfos{
 public:
     OrderbookLevelInfos(const LevelInfos& bids,const LevelInfos& asks)
