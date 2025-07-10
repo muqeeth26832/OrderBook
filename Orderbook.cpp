@@ -221,10 +221,6 @@ Trades Orderbook::MatchOrders(){
                 orders_.erase(ask->GetOrderId());
             }
 
-            if(bids.empty())
-                bids_.erase(bidPrice);
-            if(asks.empty())
-                asks_.erase(askPrice);
             trades.push_back(Trade{
                 TradeInfo{bid->GetOrderId(),bid->GetPrice(),quantity}
                ,TradeInfo{ask->GetOrderId(),ask->GetPrice(),quantity}
@@ -232,6 +228,17 @@ Trades Orderbook::MatchOrders(){
 
             OnOrderMatched(bid->GetPrice(),quantity,bid->IsFilled());
             OnOrderMatched(ask->GetPrice(),quantity,ask->IsFilled());
+        }
+
+        if(bids.empty())
+        {
+            bids_.erase(bidPrice);
+            data_.erase(bidPrice);
+        }
+        if(asks.empty())
+        {
+            asks_.erase(askPrice);
+            data_.erase(askPrice);
         }
     }
 
