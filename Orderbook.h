@@ -62,6 +62,11 @@ private:
     bool CanFullyFill(Side side,Price price,Quantity quantity) const;
     bool CanMatch(Side side,Price price) const;
     Trades MatchOrders();
+
+
+    Price lastTradedPrice_{};
+    Quantity totalVolumeTraded_{};
+    std::uint64_t priceVolumeSum_ = 0; // for VWAP
 public:
     Orderbook();
     ~Orderbook();
@@ -81,5 +86,6 @@ public:
     std::size_t Size() const {return orders_.size();}
     OrderbookLevelInfos GetOrderInfos() const;
     void PrintOrderbook() const;
+    void PrintMarketStats() const;
 
 };

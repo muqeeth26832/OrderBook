@@ -377,6 +377,9 @@ void Orderbook::OnOrderAdded(OrderPointer order){
 
 void Orderbook::OnOrderMatched(Price price,Quantity quantity, bool isFullyFilled){
     UpdateLevelData(price, quantity, isFullyFilled? LevelData::Action::REMOVE : LevelData::Action::MATCH);
+    lastTradedPrice_ = price;
+    totalVolumeTraded_ += quantity;
+    priceVolumeSum_ += static_cast<std::uint64_t>(price) * quantity;
 }
 
 void Orderbook::UpdateLevelData(Price price,Quantity quantity,LevelData::Action action){
@@ -484,4 +487,43 @@ void Orderbook::PrintOrderbook() const{
     }
 
     std::cout << BOLD << "==================================================\n" << RESET;
+}
+
+
+void Orderbook::PrintMarketStats() const {
+    std::cout << "========= Market Info =========\n";
+
+    if (!bids_.empty()) {
+        auto bestBid = bids_.begin();
+        std::cout << "Best Bid: ₹" << bestBid->first << " (Qty: " << bestBid->second.front()->GetRemainingQuantity() << ")\n";
+    } else {
+        std::cout << "Best Bid: None\n";
+    }
+
+    if (!asks_.empty()) {
+        auto bestAsk = asks_.begin();
+        std::cout << "Best Ask: ₹" << bestAsk->first << " (Qty: " << bestAsk->second.front()->GetRemainingQuantity() << ")\n";
+    } else {
+        std::cout << "Best Ask: None\n";
+    }
+
+    if (!asks_.empty() && !bids_.empty())
+        std::cout << "Spread: ₹" << (asks_.begin()->first - bids_.begin()->first) << "\n";
+    else
+        std::cout << "Spread: N/A\n";
+
+    std::cout << "\nTotal Buy Orders: " << bids_.size() << "\n";
+    std::cout << "Total Sell Orders: " << asks_.size() << "\n";
+    std::cout << "Total Orders in Book: " << Size() << "\n";
+
+    if (totalVolumeTraded_ > 0) {
+        std::cout << "\nLast Traded Price: ₹" << lastTradedPrice_ << "\n";
+        std::cout << "Total Volume Traded: " << totalVolumeTraded_ << "\n";
+        double vwap = static_cast<double>(priceVolumeSum_) / totalVolumeTraded_;
+        std::cout << "VWAP: ₹" << std::fixed << std::setprecision(2) << vwap << "\n";
+    } else {
+        std::cout << "\nNo trades yet.\n";
+    }
+
+    std::cout << "==============================\n\n";
 }
