@@ -173,8 +173,8 @@ bool Orderbook::CanFullyFill(Side side,Price price,Quantity quantity) const {
 
     for(const auto& [levelPrice,levelData] : data_){
         if(threshold.has_value() &&
-            (side==Side::Buy && threshold.value() > levelPrice) ||
-            (side==Side::Sell && threshold.value() <levelPrice))
+            ((side==Side::Buy && threshold.value() > levelPrice) ||
+             (side==Side::Sell && threshold.value() < levelPrice)))
             continue;
 
         if((side==Side::Buy && levelPrice > price) || (side==Side::Sell && levelPrice < price))
@@ -197,14 +197,19 @@ Trades Orderbook::MatchOrders(){
     while(true){
         if(bids_.empty() || asks_.empty()) break;
 
-        auto &[bidPrice,bids] = *bids_.begin();
-        auto &[askPrice,asks] = *asks_.begin();
+        // copy the prices: erasing the level below would leave a reference dangling
+        const Price bidPrice = bids_.begin()->first;
+        const Price askPrice = asks_.begin()->first;
+        auto& bids = bids_.begin()->second;
+        auto& asks = asks_.begin()->second;
 
         if(bidPrice<askPrice) break;
 
         while(bids.size() && asks.size()){
-            auto& bid = bids.front();
-            auto& ask = asks.front();
+            // copy the shared_ptrs: pop_front() below destroys the list node,
+            // so references into the list would dangle
+            auto bid = bids.front();
+            auto ask = asks.front();
 
             Quantity quantity = std::min(bid->GetRemainingQuantity(),ask->GetRemainingQuantity());
 
@@ -248,7 +253,8 @@ Trades Orderbook::MatchOrders(){
         auto& [_,bids] = *bids_.begin();
         auto& order = bids.front();
         if(order->GetOrderType()==OrderType::FillAndKill){
-            CancelOrder(order->GetOrderId());
+            // caller (AddOrder) already holds ordersMutex_; std::mutex is not recursive
+            CancelOrderInternal(order->GetOrderId());
         }
     }
 
@@ -256,7 +262,7 @@ Trades Orderbook::MatchOrders(){
         auto& [_,asks] = *asks_.begin();
         auto& order = asks.front();
         if(order->GetOrderType()==OrderType::FillAndKill){
-            CancelOrder(order->GetOrderId());
+            CancelOrderInternal(order->GetOrderId());
         }
     }
     return trades;
@@ -326,11 +332,17 @@ Trades Orderbook::AddOrder(OrderPointer order)
 /* to modify the order */
 Trades Orderbook::ModifyOrder(OrderModify order)
 {
-    if(orders_.find(order.GetOrderId())==orders_.end()) return Trades{};
-
-    const auto &[existingOrder,_] = orders_[order.GetOrderId()];
-    CancelOrder(order.GetOrderId());
-    return AddOrder(order.ToOrderPointer(existingOrder->GetOrderType()));
+    OrderType type;
+    {
+        // read + cancel under the lock; copy the type before the entry is erased
+        std::scoped_lock ordersLock{ordersMutex_};
+        auto it = orders_.find(order.GetOrderId());
+        if(it==orders_.end()) return Trades{};
+        type = it->second.order_->GetOrderType();
+        CancelOrderInternal(order.GetOrderId());
+    }
+    // a modify loses time priority: the order re-enters at the back of its level
+    return AddOrder(order.ToOrderPointer(type));
 }
 
 
